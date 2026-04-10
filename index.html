@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generative Kunst - 60 FPS Liquid Mandala</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;  
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        /* --- UI PANEL LINKS --- */
+        #ui-panel {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(15, 15, 20, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            width: 260px;
+            z-index: 100;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+
+        .control-group { display: flex; flex-direction: column; gap: 5px; }
+        .control-group label {
+            font-size: 13px; text-transform: uppercase; letter-spacing: 1px;
+            color: #ddd; display: flex; justify-content: space-between;
+        }
+
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%;
+            background: #fff; cursor: pointer; margin-top: -6px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 4px; cursor: pointer; background: #555; border-radius: 2px;
+        }
+
+        /* --- BUTTON CONTAINER (OBEN RECHTS) --- */
+        #button-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column; /* NEU: Stapelt die Buttons untereinander */
+            gap: 10px; 
+            z-index: 100; 
+        }
+
+        .frame-button {
+            padding: 10px 20px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            background-color: #ffffff;
+            color: #333;
+            border: none;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        .frame-button:hover { background-color: #e0e0e0; }
+        .frame-button:active { transform: scale(0.95); }
+
+        /* --- DER VARIABLE RAHMEN --- */
+        #frameBox {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%); 
+            border: 2px solid red; 
+            background-color: transparent; 
+            display: none; 
+            z-index: 90; 
+            pointer-events: none; 
+        }
+    </style>
+</head>
+<body>
+
+    <div id="button-container">
+        <button id="btnSquare" class="frame-button">Button Quadrat</button>
+        <button id="btnIphone" class="frame-button">Button iphone</button>
+    </div>
+
+    <div id="frameBox"></div>
+
+    <div id="ui-panel">
+        <div class="control-group">
+            <label>Symmetrie (Kaleidoskop) <span id="valSym">0</span></label>
+            <input type="range" id="symSlider" min="0" max="12" value="0" step="1">
+        </div>
+        <div class="control-group">
+            <label>Muster-Detail <span id="valDetail">2.0</span></label>
+            <input type="range" id="detailSlider" min="0.5" max="5.0" value="2.0" step="0.1">
+        </div>
+        <div class="control-group">
+            <label>Fließ-Geschwindigkeit <span id="valSpeed">1.0</span></label>
+            <input type="range" id="speedSlider" min="0.0" max="3.0" value="1.0" step="0.1">
+        </div>
+    </div>
+
+    <canvas id="glcanvas"></canvas>
+
+    <script>
+        // --- RAHMEN & BUTTON LOGIK ---
+        const btnSquare = document.getElementById('btnSquare');
+        const btnIphone = document.getElementById('btnIphone');
+        const frameBox = document.getElementById('frameBox');
+        
+        let currentFrame = 'none';
+
+        function toggleFrame(type) {
+            if (type === 'square') {
+                if (currentFrame === 'square') {
+                    frameBox.style.display = 'none';
+                    currentFrame = 'none';
+                } else {
+                    frameBox.style.width = '800px';
+                    frameBox.style.height = '800px';
+                    frameBox.style.display = 'block';
+                    currentFrame = 'square';
+                }
+            } else if (type === 'iphone') {
+                if (currentFrame === 'iphone') {
+                    frameBox.style.display = 'none';
+                    currentFrame = 'none';
+                } else {
+                    frameBox.style.width = '393px';
+                    frameBox.style.height = '852px';
+                    frameBox.style.display = 'block';
+                    currentFrame = 'iphone';
+                }
+            }
+        }
+
+        btnSquare.addEventListener('click', () => toggleFrame('square'));
+        btnIphone.addEventListener('click', () => toggleFrame('iphone'));
+
+        // --- WEBGL SETUP & SHADER (60 FPS Version) ---
+        const canvas = document.getElementById('glcanvas');
+        const gl = canvas.getContext('webgl');
+
+        function resize() {
+            const performanceScale = 0.8; 
+            canvas.width = window.innerWidth * performanceScale;
+            canvas.height = window.innerHeight * performanceScale;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        const vertexShaderSource = `
+            attribute vec2 position;
+            void main() {
+                gl_Position = vec4(position, 0.0, 1.0);
+            }
+        `;
+
+        const fragmentShaderSource = `
+            precision mediump float;
+            uniform vec2 u_resolution;
+            uniform float u_time;
+            uniform float u_symmetry;
+            uniform float u_detail;
+            uniform float u_speed;
+
+            float hash(vec2 p) {
+                return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+            }
+
+            float noise(vec2 p) {
+                vec2 i = floor(p);
+                vec2 f = fract(p);
+                f = f * f * (3.0 - 2.0 * f);
+                float a = hash(i);
+                float b = hash(i + vec2(1.0, 0.0));
+                float c = hash(i + vec2(0.0, 1.0));
+                float d = hash(i + vec2(1.0, 1.0));
+                return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+            }
+
+            float fbm(vec2 p) {
+                float f = 0.0;
+                f += 0.500 * noise(p); p *= 2.02;
+                f += 0.250 * noise(p); p *= 2.03;
+                f += 0.125 * noise(p);
+                return f;
+            }
+
+            vec3 palette(float t) {
+                vec3 a = vec3(0.5);
+                vec3 b = vec3(0.5);
+                vec3 c = vec3(1.0);
+                vec3 d = vec3(0.0, 0.33, 0.67);
+                return a + b * cos(6.28318 * (c * t + d));
+            }
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution.xy) / u_resolution.y;
+
+                if (u_symmetry > 1.5) {
+                    float angle = atan(uv.y, uv.x);
+                    float radius = length(uv);
+                    float segment = 6.28318530718 / floor(u_symmetry);
+                    angle = mod(angle, segment);
+                    angle = abs(angle - segment / 2.0);
+                    uv = radius * vec2(cos(angle), sin(angle));
+                }
+
+                float t = u_time * u_speed * 0.3;
+
+                vec2 q = vec2(sin(uv.y * u_detail + t), cos(uv.x * u_detail + t));
+                vec2 r = vec2(fbm(uv * u_detail + 3.0 * q + t * 1.5), 
+                              fbm(uv * u_detail + 3.0 * q + t * 1.2));
+                              
+                float f = fbm(uv * u_detail + 4.0 * r);
+
+                vec3 col = palette(f * 1.5 + length(q) * 0.5 + t * 0.5);
+                col += vec3(0.15) * (1.0 - length(r));
+
+                gl_FragColor = vec4(col, 1.0);
+            }
+        `;
+
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            return shader;
+        }
+
+        const program = gl.createProgram();
+        gl.attachShader(program, createShader(gl, gl.VERTEX_SHADER, vertexShaderSource));
+        gl.attachShader(program, createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource));
+        gl.linkProgram(program);
+        gl.useProgram(program);
+
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+        const positionLocation = gl.getAttribLocation(program, "position");
+        gl.enableVertexAttribArray(positionLocation);
+        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+        const resLoc = gl.getUniformLocation(program, "u_resolution");
+        const timeLoc = gl.getUniformLocation(program, "u_time");
+        const symLoc = gl.getUniformLocation(program, "u_symmetry");
+        const detailLoc = gl.getUniformLocation(program, "u_detail");
+        const speedLoc = gl.getUniformLocation(program, "u_speed");
+
+        let symValue = 0.0;
+        let detailValue = 2.0;
+        let speedValue = 1.0;
+
+        document.getElementById('symSlider').addEventListener('input', (e) => {
+            symValue = parseFloat(e.target.value);
+            document.getElementById('valSym').innerText = symValue === 0 ? "Aus" : symValue;
+        });
+
+        document.getElementById('detailSlider').addEventListener('input', (e) => {
+            detailValue = parseFloat(e.target.value);
+            document.getElementById('valDetail').innerText = detailValue.toFixed(1);
+        });
+
+        document.getElementById('speedSlider').addEventListener('input', (e) => {
+            speedValue = parseFloat(e.target.value);
+            document.getElementById('valSpeed').innerText = speedValue.toFixed(1);
+        });
+
+        function render(time) {
+            gl.uniform2f(resLoc, canvas.width, canvas.height);
+            gl.uniform1f(timeLoc, time * 0.001); 
+            gl.uniform1f(symLoc, symValue);
+            gl.uniform1f(detailLoc, detailValue);
+            gl.uniform1f(speedLoc, speedValue);
+
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            requestAnimationFrame(render);
+        }
+
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html>
